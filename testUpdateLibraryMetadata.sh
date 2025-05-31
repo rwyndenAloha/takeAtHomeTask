@@ -14,7 +14,7 @@ get_library_id() {
 LIBRARY_ID=$(get_library_id)
 
 # Original curl command with dynamic library_id
-curl -X PUT "http://localhost:8000/api/v1/libraries/$LIBRARY_ID/metadata" \
+curl -X PUT "http://10.10.10.129:8000/api/v1/libraries/$LIBRARY_ID/metadata" \
      -H "Content-Type: application/json" \
      -d '{"name": "Updated Library Name"}' > /dev/null
 

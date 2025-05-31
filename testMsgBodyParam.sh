@@ -15,7 +15,7 @@ get_library_id() {
 LIBRARY_ID=$(get_library_id)
 
 # Original curl command with dynamic library_id
-curl -X POST "http://localhost:8000/api/v1/libraries/$LIBRARY_ID/documents" \
+curl -X POST "http://10.10.10.129:8000/api/v1/libraries/$LIBRARY_ID/documents" \
      -H "Content-Type: application/json" \
      -d '{"msg_body": "Sample message for testing"}' > /dev/null
 

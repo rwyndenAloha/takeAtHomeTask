@@ -14,7 +14,7 @@ get_library_id() {
 LIBRARY_ID=$(get_library_id)
 
 # Original curl command with dynamic library_id
-curl -X GET "http://localhost:8000/api/v1/libraries/$LIBRARY_ID/search?query=test" \
+curl -X GET "http://10.10.10.129:8000/api/v1/libraries/$LIBRARY_ID/search?query=test" \
      -H "Content-Type: application/json" > /dev/null
 
 if [ $? -eq 0 ]; then
