@@ -3,12 +3,12 @@ import json
 import os
 import subprocess
 
-# Run testSearch.sh and capture output
-result = subprocess.run(["./testSearch.sh"], capture_output=True, text=True)
+# Run testSearch.sh
+result = subprocess.run(["./vector_database/testSearch.sh"], capture_output=True, text=True)
 data = json.loads(result.stdout)
 
 # Initialize Cohere client
-co = cohere.Client(os.getenv("COHERE_API_KEY"))
+co = cohere.Client(os.getenv("COHERE_API_KEY") or "YOUR_NEW_COHERE_API_KEY")
 
 # Extract texts
 texts = [item["text"] for item in data]
@@ -24,8 +24,7 @@ response = co.embed(
 for i, item in enumerate(data):
     item["embedding"] = response.embeddings[i]
 
-# Save or print
+# Save output
 with open("embedded_output.json", "w") as f:
     json.dump(data, f, indent=2)
 print(json.dumps(data, indent=2))
-EOF
