@@ -4,7 +4,7 @@ import os
 import subprocess
 
 # Run testSearch.sh
-result = subprocess.run(["./vector_database/testSearch.sh"], capture_output=True, text=True)
+result = subprocess.run(["./testSearch.sh"], capture_output=True, text=True)
 data = json.loads(result.stdout)
 
 # Initialize Cohere client
