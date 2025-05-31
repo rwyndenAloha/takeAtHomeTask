@@ -14,11 +14,15 @@ co = cohere.Client(os.getenv("COHERE_API_KEY") or "YOUR_NEW_COHERE_API_KEY")
 texts = [item["text"] for item in data]
 
 # Generate embeddings
-response = co.embed(
-    texts=texts,
-    model="embed-english-v3.0",
-    input_type="search_document"
-)
+try:
+    response = co.embed(
+        texts=texts, 
+        model="embed-english-v3.0", 
+        input_type="search_document"
+    )
+except cohere.CohereAPIError as e:
+    print(f"Cohere API error: {e}")
+    exit(1)
 
 # Add embeddings to data
 for i, item in enumerate(data):
