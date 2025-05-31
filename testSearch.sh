@@ -1,4 +1,25 @@
 #!/bin/bash
-curl -X POST "http://10.10.10.129:8000/libraries/ba75b96a-7dcb-4800-bbb8-d69907e67198/search/" \
-     -H "Content-Type: application/json" \
-     -d '{"embedding": [0.1, 0.2, 0.3], "k": [2]}'
+
+# Helper function to get the most recent library_id
+get_library_id() {
+    LIBRARY_ID=$(./testLibrList.sh | jq -r '.[0].id' 2>/dev/null)
+    if [ -z "$LIBRARY_ID" ]; then
+        echo "Error: Could not retrieve library_id from testLibrList.sh"
+        exit 1
+    fi
+    echo "$LIBRARY_ID"
+}
+
+# Get library_id
+LIBRARY_ID=$(get_library_id)
+
+# Original curl command with dynamic library_id
+curl -X GET "http://localhost:8000/api/v1/libraries/$LIBRARY_ID/search?query=test" \
+     -H "Content-Type: application/json" > /dev/null
+
+if [ $? -eq 0 ]; then
+    echo "testSearch.sh: Successfully searched library $LIBRARY_ID"
+else
+    echo "testSearch.sh: Failed to search library $LIBRARY_ID"
+    exit 1
+fi
