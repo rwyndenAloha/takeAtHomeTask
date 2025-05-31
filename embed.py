@@ -2,10 +2,21 @@ import cohere
 import json
 import os
 import subprocess
+import argparse
 
 # Run testSearch.sh
-result = subprocess.run(["./testSearch.sh"], capture_output=True, text=True)
-data = json.loads(result.stdout)
+parser = argparse.ArgumentParser()
+parser.add_argument("--input", default="./testSearch.sh", help="Input script or JSON file")
+parser.add_argument("--output", default="embedded_output.json", help="Output JSON file")
+args = parser.parse_args()
+
+# Run script or read file
+if args.input.endswith(".sh"):
+    result = subprocess.run([args.input], capture_output=True, text=True)
+    data = json.loads(result.stdout)
+else:
+    with open(args.input) as f:
+        data = json.load(f)
 
 # Initialize Cohere client
 co = cohere.Client(os.getenv("COHERE_API_KEY") or "YOUR_NEW_COHERE_API_KEY")
