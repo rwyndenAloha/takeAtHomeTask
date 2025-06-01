@@ -15,6 +15,14 @@ Thread Safety Choice
 
 RLock: Used in VectorDBService and indexes to ensure thread-safe reads and writes.
 Design Choice: RLock allows recursive locking within the same thread, suitable for nested operations (e.g., updating a chunk within a document). It prevents data races while maintaining performance for read-heavy workloads.
+
+Thread Safety Mechanisms
+
+threading.RLock:
+indexing.py:
+FlatIndex: self.lock (RLock) protects add and search, ensuring thread-safe list appends and distance computations.
+BallTreeIndex: self.lock protects add (tree insertion) and search (tree traversal), preventing races during node updates or queries.
+
 """
 
 import numpy as np from typing import List, Tuple import threading

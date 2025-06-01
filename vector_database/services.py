@@ -1,3 +1,17 @@
+"""
+Concurrency handling (also see indexing.py for bulk of it...)
+
+VectorDBService: self.lock (RLock) wraps all methods, ensuring thread-safe access to self.libraries and self.indexes.
+
+Overview of thread safety
+
+VectorDBService uses RLock for all methods, protecting self.libraries (dictionary updates, list appends) and self.indexes (index creation, updates, queries). This covers:
+Reads: get_library, search (accessing self.libraries, calling index.query).
+Writes: create_library, add_document, update_library (modifying self.libraries, self.indexes).
+
+Asyncio Safety: RLock is thread-safe, and since FastAPI uses asyncio, the lock ensures coroutines don’t race (e.g., concurrent POST /documents/ and POST /search/).
+"""
+
 from typing import List, Optional, Dict
 import threading
 import numpy as np
