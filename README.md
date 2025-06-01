@@ -17,7 +17,9 @@ Requirements Fulfilled:
 Extra:
 
 7. See query.py (comments at top also)
-The cosine similarity in query.py adds client-side semantic search to the system complementing the serverside vector search. Uses Cohere as well.
+The cosine similarity in query.py adds client-side semantic search to the system complementing the serverside vector search. Uses Cohere as well for offline searching ability.
+
+To query serverside (original requirement just run testSearch.sh.
 
 Note: See movie for walkthrough
 
