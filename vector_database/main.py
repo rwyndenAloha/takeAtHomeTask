@@ -3,10 +3,11 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import List
 import numpy as np
+from services import VectorDBService  # Import VectorDBService
 
-# Existing imports and app setup (assumed)
+# Existing app setup
 app = FastAPI()
-db = VectorDBService()  # Singleton instance (assumed)
+db = VectorDBService()  # Singleton instance
 
 # Request model for the new endpoint
 class ChunkSearchRequest(BaseModel):
@@ -14,7 +15,7 @@ class ChunkSearchRequest(BaseModel):
     start_date: str
     name_contains: str
 
-# Response model (aligns with existing search responses)
+# Response model
 class ChunkSearchResult(BaseModel):
     library_id: str
     document_id: str
@@ -49,7 +50,8 @@ async def search_chunks(request: ChunkSearchRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
-# Add to VectorDBService (assumed class in services.py, update accordingly)
+# Add to services.py (if not already present)
+"""
 def search_chunks_after_date(self, query_embedding: np.ndarray, start_date: datetime, name_contains: str) -> List[dict]:
     results = []
     for library_id, library in self.libraries.items():
@@ -66,7 +68,7 @@ def search_chunks_after_date(self, query_embedding: np.ndarray, start_date: date
                 chunk_embedding = np.array(chunk.embedding)
                 if chunk_embedding.shape != query_embedding.shape:
                     continue  # Skip mismatched embeddings
-                # Compute cosine similarity (assumed metric)
+                # Compute cosine similarity
                 similarity = np.dot(chunk_embedding, query_embedding) / (
                     np.linalg.norm(chunk_embedding) * np.linalg.norm(query_embedding)
                 )
@@ -81,3 +83,4 @@ def search_chunks_after_date(self, query_embedding: np.ndarray, start_date: date
                         "similarity": float(similarity)
                     })
     return results
+"""
