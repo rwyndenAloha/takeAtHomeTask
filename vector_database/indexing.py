@@ -1,4 +1,4 @@
-/*
+"""
 Indexing Algorithms Supported
 
 FlatIndex: Brute-force k-NN search.
@@ -15,7 +15,7 @@ Thread Safety Choice
 
 RLock: Used in VectorDBService and indexes to ensure thread-safe reads and writes.
 Design Choice: RLock allows recursive locking within the same thread, suitable for nested operations (e.g., updating a chunk within a document). It prevents data races while maintaining performance for read-heavy workloads.
-*/
+"""
 
 import numpy as np from typing import List, Tuple import threading
 
