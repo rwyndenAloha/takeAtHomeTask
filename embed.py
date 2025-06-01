@@ -1,39 +1,47 @@
-import cohere
-import json
-import os
+#!/usr/bin/env python3
 import subprocess
+import json
 import numpy as np
-import re
-
-# Run testSearch.sh
-result = subprocess.run(["./testSearch.sh"], capture_output=True, text=True)
-if result.returncode != 0:
-    print(f"Error: testSearch.sh failed with: {result.stderr}", file=os.stderr)
-    exit(1)
-
-# Extract JSON from testSearch.sh output
-json_match = re.search(r'\[.*\]', result.stdout, re.DOTALL)
-if not json_match:
-    print("Error: No JSON found in testSearch.sh output", file=os.stderr)
-    exit(1)
-
-try:
-    data = json.loads(json_match.group(0))
-except json.JSONDecodeError as e:
-    print(f"Error: Invalid JSON in testSearch.sh output: {e}", file=os.stderr)
-    exit(1)
+import cohere
+import os
+import sys
 
 # Initialize Cohere client
-api_key = os.getenv("COHERE_API_KEY")
-if not api_key:
-    print("Error: COHERE_API_KEY environment variable not set", file=os.stderr)
+co = cohere.Client(os.getenv("COHERE_API_KEY"))
+
+# Get LIBRARY_ID from environment
+LIBRARY_ID = os.getenv("LIBRARY_ID")
+if not LIBRARY_ID:
+    print("Error: LIBRARY_ID environment variable not set", file=sys.stderr)
     exit(1)
-co = cohere.Client(api_key)
+
+# Run testSearch.sh with LIBRARY_ID
+try:
+    result = subprocess.run(
+        ["./testSearch.sh"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "LIBRARY_ID": LIBRARY_ID},
+        check=True
+    )
+    search_output = result.stdout
+except subprocess.CalledProcessError as e:
+    print(f"Error running testSearch.sh for library {LIBRARY_ID}: {e}", file=sys.stderr)
+    exit(1)
+
+# Parse search output
+try:
+    chunks = json.loads(search_output)
+    if not isinstance(chunks, list):
+        chunks = []
+except json.JSONDecodeError:
+    print(f"Error: Invalid JSON from testSearch.sh for library {LIBRARY_ID}", file=sys.stderr)
+    exit(1)
 
 # Extract texts
-texts = [item["text"] for item in data if "text" in item]
+texts = [chunk["text"] for chunk in chunks if "text" in chunk]
 if not texts:
-    print("Error: No texts found in testSearch.sh output", file=os.stderr)
+    print(f"Error: No texts found in testSearch.sh output for library {LIBRARY_ID}", file=sys.stderr)
     exit(1)
 
 # Generate embeddings
@@ -43,24 +51,23 @@ try:
         model="embed-english-v3.0",
         input_type="search_document"
     )
+    embeddings = response.embeddings
 except cohere.CohereAPIError as e:
-    print(f"Cohere API error: {e}", file=os.stderr)
+    print(f"Cohere API error: {e}", file=sys.stderr)
     exit(1)
 
-# Add embeddings and save
-embeddings = []
-for i, item in enumerate(data):
-    if i < len(response.embeddings):
-        item["embedding"] = response.embeddings[i]
-        embeddings.append({
-            "chunk_id": item.get("chunk_id", ""),
-            "embedding": item["embedding"],
-            "text": item.get("text", ""),
-            "metadata": item.get("metadata", {})
-        })
-
-# Save to JSON and NumPy
-with open("embedded_output.json", "w") as f:
-    json.dump(data, f, indent=2)
-np.save("embeddings.npy", np.array(embeddings, dtype=object))
-print(json.dumps(data, indent=2))
+# Save embeddings
+output = [
+    {
+        "chunk_id": chunk["chunk_id"],
+        "text": chunk["text"],
+        "metadata": chunk["metadata"],
+        "embedding": embedding
+    }
+    for chunk, embedding in zip(chunks, embeddings)
+]
+with open("embedded_output.json", "a") as f:  # Append to accumulate embeddings
+    json.dump(output, f, indent=2)
+    f.write("\n")
+np.save("embeddings.npy", output)
+print(f"Successfully generated embeddings for library {LIBRARY_ID}")
