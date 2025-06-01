@@ -28,3 +28,23 @@ RLock: Ensures safety with recursive locking, balancing performance and consiste
 Custom BallTreeIndex: Optimizes search for small datasets, with locks for concurrency.
 In-Memory Storage: Fast but ephemeral, sufficient for testing.
 
+SERVICES DECOUPLING
+
+Implementation:
+VectorDBService: Encapsulates all CRUD logic (create_library, add_document, search, etc.), separate from API endpoints.
+
+main.py: Endpoints call VectorDBService methods via dependency injection (Depends(get_db)), e.g.:
+python
+
+async def create_library(library: LibraryCreate, db: VectorDBService = Depends(get_db)):
+    return db.create_library(...)
+
+Decoupling: API endpoints handle HTTP concerns (request validation, response formatting), while VectorDBService manages data operations, achieving clear separation.
+
+Decoupling Fully fulfilled, as all implemented endpoints use VectorDBService, and services.py contains the business logic.
+
+CRUD
+
+Create/Read/Update/Delete: Fully implemented with endpoints, Service methods, and tests
+
+
