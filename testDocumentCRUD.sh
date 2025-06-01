@@ -1,7 +1,23 @@
 #!/bin/bash
 
-LIBRARY_ID="fb9c4765-07bc-450c-b784-499d8db4c2ad"
-DOCUMENT_ID="cdcb7d99-687b-4f3e-9bb0-a5b945e1986d"
+# Run testLibrList.sh and capture output
+LIBRARIES=$(./testLibrList.sh)
+
+# Extract the first library_id and document_id from a library with documents
+LIBRARY_ID=$(echo "$LIBRARIES" | jq -r '.[] | select(.documents | length > 0) | .id' | head -n 1)
+DOCUMENT_ID=$(echo "$LIBRARIES" | jq -r '.[] | select(.documents | length > 0) | .documents[0].id' | head -n 1)
+
+if [ -z "$LIBRARY_ID" ] || [ "$LIBRARY_ID" = "null" ]; then
+    echo "Error: No libraries found or invalid library_id" >&2
+    exit 1
+fi
+
+if [ -z "$DOCUMENT_ID" ] || [ "$DOCUMENT_ID" = "null" ]; then
+    echo "Error: No documents found or invalid document_id" >&2
+    exit 1
+fi
+
+echo "Testing document CRUD operations for library $LIBRARY_ID, document $DOCUMENT_ID"
 
 # Read Document
 echo "Reading document $DOCUMENT_ID"
