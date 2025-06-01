@@ -14,12 +14,15 @@ get_library_id() {
 # Get library_id
 LIBRARY_ID=$(get_library_id)
 
-# Original curl command with dynamic library_id
-curl -X POST "http://10.10.10.129:8000/api/v1/libraries/$LIBRARY_ID/documents" \
+# Run curl and capture the response
+RESPONSE=$(curl -X POST "http://<your-ip>:8000/api/v1/libraries/$LIBRARY_ID/documents" \
      -H "Content-Type: application/json" \
-     -d '{"msg_body": "Sample message for testing"}' > /dev/null
+     -d '{"msg_body": "Sample message for testing"}' 2>/dev/null)
 
+# Check if curl was successful
 if [ $? -eq 0 ]; then
+    echo "JSON Response:"
+    echo "$RESPONSE"
     echo "testMsgBodyParam.sh: Successfully posted document to library $LIBRARY_ID"
 else
     echo "testMsgBodyParam.sh: Failed to post document to library $LIBRARY_ID"
