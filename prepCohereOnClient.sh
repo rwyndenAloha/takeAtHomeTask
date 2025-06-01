@@ -30,10 +30,10 @@ for LIBRARY_ID in $(echo "$LIBRARIES" | jq -r '.[].id'); do
         else
             echo "Warning: embedded_output.json is empty" >&2
         fi
-        echo "testCohere.sh: Successfully generated embeddings for library $LIBRARY_ID"
+        echo "prepCohereOnClient.sh: Successfully generated embeddings for library $LIBRARY_ID"
     else
         echo "Error Response:"
         echo "$RESPONSE"
-        echo "testCohere.sh: Failed to generate embeddings for library $LIBRARY_ID"
+        echo "prepCohereOnClient.sh: Failed to generate embeddings for library $LIBRARY_ID"
     fi
 done

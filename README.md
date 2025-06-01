@@ -41,7 +41,7 @@ TABLE OF CONTENTS
 ├── search.py
 ├── sshVMUbuntu.sh
 ├── testChunkCRUD.sh
-├── testCohere.sh
+├── prepCohereOnClient.sh
 ├── testCreateLibrary.sh
 ├── testDeleteLibrary.sh
 ├── testDocumentCRUD.sh
