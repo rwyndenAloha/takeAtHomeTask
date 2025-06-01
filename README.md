@@ -22,10 +22,11 @@ Quick test of server side search:
 
 Extra:
 
-7. See query.py (comments at top also)
-The cosine similarity in query.py adds client-side semantic search to the system complementing the serverside vector search. Uses Cohere as well for offline searching ability.
+7. See queryFromClient.py (comments at top also)
+The cosine similarity in queryFromClient.py adds client-side semantic search to the system complementing the serverside vector search. Uses Cohere as well for offline searching ability.
 
-Quick test of this off-line search: type: "python3 query.py" (and use "Sample")
+Quick test of this off-line search: type: "python3 queryFromClient.py"
+  (and use "Sample")
 
 NOTE: See movie for walkthrough
 
@@ -34,7 +35,7 @@ TABLE OF CONTENTS
 ├── embeddings.npy
 ├── embed.py Generates embeddings to embedded_output.json & embeddings.npy.
 ├── LICENSE
-├── query.py Adds client-side query of embeddings with cosine similarity
+├── queryFromClient.py Adds client-side query with cosine similarity
 ├── query_results.json
 ├── README.md
 ├── search.py

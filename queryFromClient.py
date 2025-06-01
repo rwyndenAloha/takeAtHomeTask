@@ -1,9 +1,9 @@
 """
 Purpose:
 
-The cosine similarity in query.py adds client-side semantic search to the system, complementing the servers vector search (POST /libraries/{library_id}/search/).
+The cosine similarity in queryFromClient.py adds client-side semantic search to the system, complementing the servers vector search (POST /libraries/{library_id}/search/).
 
-Also, provides example of cohere; you run testCohere.sh and then you can use query.py on its output.
+Also, provides example of cohere; you run testCohere.sh and then you can use queryFromClient.py on its output.
 
 The offline semantic search reduces server load.  A lightweight offline alternative to real time server updates.  Allows queries to run locally without updating server state.  Appropriate for smaller datasets.
 
@@ -27,7 +27,7 @@ Sorts results by similarity (descending) and limits to the top 5.  Prints JSON o
 
 
 Example:
-python3 query.py
+python3 queryFromClient.py 
 Enter query text: Sample
 [
   {
