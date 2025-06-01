@@ -6,13 +6,35 @@ from services import VectorDBService
 from models import Library, LibraryCreate, Document, DocumentCreate, Chunk, ChunkCreate, ChunkUpdate
 
 app = FastAPI()
+db = VectorDBService()  # Singleton instance
 
 def get_db():
-    return VectorDBService()
+    return db
 
 @app.post("/libraries/", response_model=Library)
 async def create_library(library: LibraryCreate, db: VectorDBService = Depends(get_db)):
-    return db.create_library(Library(id=str(uuid4()), documents=library.documents, metadata=library.metadata, created_at=datetime.now(timezone.utc)))
+    documents = [
+        Document(
+            id=str(uuid4()),
+            chunks=[
+                Chunk(
+                    id=str(uuid4()),
+                    text=chunk.text,
+                    embedding=chunk.embedding or [],
+                    metadata=chunk.metadata,
+                    created_at=datetime.now(timezone.utc)
+                ) for chunk in doc.chunks
+            ],
+            metadata=doc.metadata,
+            created_at=datetime.now(timezone.utc)
+        ) for doc in library.documents
+    ]
+    return db.create_library(Library(
+        id=str(uuid4()),
+        documents=documents,
+        metadata=library.metadata,
+        created_at=datetime.now(timezone.utc)
+    ))
 
 @app.get("/libraries/", response_model=List[Dict])
 async def get_libraries(db: VectorDBService = Depends(get_db)):
@@ -40,7 +62,24 @@ async def delete_library(library_id: str, db: VectorDBService = Depends(get_db))
 
 @app.post("/libraries/{library_id}/documents/", response_model=Document)
 async def add_document(library_id: str, document: DocumentCreate, db: VectorDBService = Depends(get_db)):
-    new_document = db.add_document(library_id, Document(id=str(uuid4()), chunks=document.chunks, metadata=document.metadata, created_at=datetime.now(timezone.utc)))
+    chunks = [
+        Chunk(
+            id=str(uuid4()),
+            text=chunk.text,
+            embedding=chunk.embedding or [],
+            metadata=chunk.metadata,
+            created_at=datetime.now(timezone.utc)
+        ) for chunk in document.chunks
+    ]
+    new_document = db.add_document(
+        library_id,
+        Document(
+            id=str(uuid4()),
+            chunks=chunks,
+            metadata=document.metadata,
+            created_at=datetime.now(timezone.utc)
+        )
+    )
     if not new_document:
         raise HTTPException(status_code=404, detail="Library not found")
     return new_document
@@ -67,7 +106,17 @@ async def delete_document(library_id: str, document_id: str, db: VectorDBService
 
 @app.post("/libraries/{library_id}/documents/{document_id}/chunks/", response_model=Chunk)
 async def add_chunk(library_id: str, document_id: str, chunk: ChunkCreate, db: VectorDBService = Depends(get_db)):
-    new_chunk = db.add_chunk(library_id, document_id, Chunk(id=str(uuid4()), text=chunk.text, embedding=chunk.embedding, metadata=chunk.metadata, created_at=datetime.now(timezone.utc)))
+    new_chunk = db.add_chunk(
+        library_id,
+        document_id,
+        Chunk(
+            id=str(uuid4()),
+            text=chunk.text,
+            embedding=chunk.embedding or [],
+            metadata=chunk.metadata,
+            created_at=datetime.now(timezone.utc)
+        )
+    )
     if not new_chunk:
         raise HTTPException(status_code=404, detail="Library or document not found")
     return new_chunk
@@ -81,7 +130,13 @@ async def get_chunk(library_id: str, document_id: str, chunk_id: str, db: Vector
 
 @app.put("/libraries/{library_id}/documents/{document_id}/chunks/{chunk_id}", response_model=Chunk)
 async def update_chunk(library_id: str, document_id: str, chunk_id: str, chunk: ChunkUpdate, db: VectorDBService = Depends(get_db)):
-    updated_chunk = db.update_chunk(library_id, document_id, chunk_id, chunk.text, chunk.embedding)
+    updated_chunk = db.update_chunk(
+        library_id,
+        document_id,
+        chunk_id,
+        chunk.text or "",
+        chunk.embedding or []
+    )
     if not updated_chunk:
         raise HTTPException(status_code=404, detail="Chunk not found")
     return updated_chunk
