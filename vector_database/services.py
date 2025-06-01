@@ -17,6 +17,12 @@ import threading
 import numpy as np
 from models import Library, Document, Chunk
 from heapq import heappush, heappop
+from datetime import datetime
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class FlatIndex:
     def __init__(self):
@@ -110,6 +116,10 @@ class VectorDBService:
         self.libraries: Dict[str, Library] = {}
         self.indexes: Dict[str, FlatIndex | BallTreeIndex] = {}
         self.lock = threading.RLock()
+        # Clear libraries to remove potentially corrupted data
+        logger.info("Initializing VectorDBService with empty libraries")
+        self.libraries.clear()
+        self.indexes.clear()
 
     def create_library(self, library: Library) -> Library:
         with self.lock:
@@ -118,7 +128,14 @@ class VectorDBService:
             for doc in library.documents:
                 for chunk in doc.chunks:
                     if chunk.embedding:
-                        embeddings.append(chunk.embedding)
+                        # Convert embedding elements to float
+                        try:
+                            embedding = [float(x) for x in chunk.embedding]
+                            logger.debug(f"Validated embedding for chunk {chunk.id}: {embedding}")
+                        except (ValueError, TypeError) as e:
+                            logger.error(f"Invalid embedding in create_library for chunk {chunk.id}: {chunk.embedding}, error: {e}")
+                            raise ValueError(f"Invalid embedding: {chunk.embedding}")
+                        embeddings.append(embedding)
                         chunk_ids.append(chunk.id)
             if embeddings and not all(len(e) == len(embeddings[0]) for e in embeddings):
                 raise ValueError("All embeddings must have the same dimensionality")
@@ -127,6 +144,7 @@ class VectorDBService:
             if embeddings:
                 index.chunk_ids = chunk_ids
             self.indexes[library.id] = index
+            logger.info(f"Created library {library.id} with {len(embeddings)} embeddings")
             return library
 
     def get_library(self, library_id: str) -> Optional[Library]:
@@ -157,8 +175,19 @@ class VectorDBService:
             if library_id not in self.libraries:
                 return None
             self.libraries[library_id].documents.append(document)
-            embeddings = [chunk.embedding for chunk in document.chunks if chunk.embedding]
-            chunk_ids = [chunk.id for chunk in document.chunks if chunk.embedding]
+            embeddings = []
+            chunk_ids = []
+            for chunk in document.chunks:
+                if chunk.embedding:
+                    # Convert embedding elements to float
+                    try:
+                        embedding = [float(x) for x in chunk.embedding]
+                        logger.debug(f"Validated embedding for chunk {chunk.id}: {embedding}")
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Invalid embedding in add_document for chunk {chunk.id}: {chunk.embedding}, error: {e}")
+                        raise ValueError(f"Invalid embedding: {chunk.embedding}")
+                    embeddings.append(embedding)
+                    chunk_ids.append(chunk.id)
             if embeddings:
                 self.indexes[library_id].add_embeddings(embeddings, chunk_ids)
             return document
@@ -193,7 +222,13 @@ class VectorDBService:
                         for doc in library.documents:
                             for chunk in doc.chunks:
                                 if chunk.embedding:
-                                    embeddings.append(chunk.embedding)
+                                    try:
+                                        embedding = [float(x) for x in chunk.embedding]
+                                        logger.debug(f"Validated embedding for chunk {chunk.id}: {embedding}")
+                                    except (ValueError, TypeError) as e:
+                                        logger.error(f"Invalid embedding in delete_document for chunk {chunk.id}: {chunk.embedding}, error: {e}")
+                                        continue
+                                    embeddings.append(embedding)
                                     chunk_ids.append(chunk.id)
                         self.indexes[library_id] = BallTreeIndex(embeddings) if embeddings else FlatIndex()
                         if embeddings:
@@ -208,7 +243,14 @@ class VectorDBService:
                     if doc.id == document_id:
                         doc.chunks.append(chunk)
                         if chunk.embedding:
-                            self.indexes[library_id].add_embeddings([chunk.embedding], [chunk.id])
+                            # Convert embedding elements to float
+                            try:
+                                embedding = [float(x) for x in chunk.embedding]
+                                logger.debug(f"Validated embedding for chunk {chunk.id}: {embedding}")
+                            except (ValueError, TypeError) as e:
+                                logger.error(f"Invalid embedding in add_chunk for chunk {chunk.id}: {chunk.embedding}, error: {e}")
+                                raise ValueError(f"Invalid embedding: {chunk.embedding}")
+                            self.indexes[library_id].add_embeddings([embedding], [chunk.id])
                         return chunk
             return None
 
@@ -230,14 +272,26 @@ class VectorDBService:
                         for chunk in doc.chunks:
                             if chunk.id == chunk_id:
                                 chunk.text = text
-                                chunk.embedding = embedding
+                                # Convert embedding elements to float
+                                try:
+                                    chunk.embedding = [float(x) for x in embedding]
+                                    logger.debug(f"Validated embedding for chunk {chunk.id}: {chunk.embedding}")
+                                except (ValueError, TypeError) as e:
+                                    logger.error(f"Invalid embedding in update_chunk for chunk {chunk.id}: {embedding}, error: {e}")
+                                    raise ValueError(f"Invalid embedding: {embedding}")
                                 # Rebuild index
                                 embeddings = []
                                 chunk_ids = []
                                 for d in self.libraries[library_id].documents:
                                     for c in d.chunks:
                                         if c.embedding:
-                                            embeddings.append(c.embedding)
+                                            try:
+                                                embedding = [float(x) for x in c.embedding]
+                                                logger.debug(f"Validated embedding for chunk {c.id}: {embedding}")
+                                            except (ValueError, TypeError) as e:
+                                                logger.error(f"Invalid embedding in update_chunk index rebuild for chunk {c.id}: {c.embedding}, error: {e}")
+                                                continue
+                                            embeddings.append(embedding)
                                             chunk_ids.append(c.id)
                                 self.indexes[library_id] = BallTreeIndex(embeddings) if embeddings else FlatIndex()
                                 if embeddings:
@@ -259,7 +313,13 @@ class VectorDBService:
                                 for d in self.libraries[library_id].documents:
                                     for c in d.chunks:
                                         if c.embedding:
-                                            embeddings.append(c.embedding)
+                                            try:
+                                                embedding = [float(x) for x in c.embedding]
+                                                logger.debug(f"Validated embedding for chunk {c.id}: {embedding}")
+                                            except (ValueError, TypeError) as e:
+                                                logger.error(f"Invalid embedding in delete_chunk for chunk {c.id}: {c.embedding}, error: {e}")
+                                                continue
+                                            embeddings.append(embedding)
                                             chunk_ids.append(c.id)
                                 self.indexes[library_id] = BallTreeIndex(embeddings) if embeddings else FlatIndex()
                                 if embeddings:
@@ -269,10 +329,13 @@ class VectorDBService:
 
     def search(self, library_id: str, query_embedding: List[float], k: int = 5) -> List[Dict]:
         with self.lock:
+            logger.debug(f"Search in library {library_id} with query_embedding={query_embedding}")
             if library_id not in self.libraries:
+                logger.warning(f"Library {library_id} not found")
                 return []
             index = self.indexes.get(library_id)
             if not index or isinstance(index, FlatIndex):
+                logger.warning(f"No valid index for library {library_id}")
                 return []
             chunk_ids = index.query(query_embedding, k)
             results = []
@@ -286,4 +349,85 @@ class VectorDBService:
                                 "text": chunk.text,
                                 "metadata": chunk.metadata
                             })
+            logger.debug(f"Search in library {library_id} returned {len(results)} results")
             return results
+
+    def search_chunks_after_date(self, query_embedding: np.ndarray, start_date: datetime, name_contains: str) -> List[dict]:
+        with self.lock:
+            results = []
+            logger.debug(f"Search parameters: query_embedding={query_embedding.tolist()}, start_date={start_date}, name_contains={name_contains}")
+            if not self.libraries:
+                logger.warning("No libraries exist in VectorDBService")
+                return []
+            logger.debug(f"Processing {len(self.libraries)} libraries")
+            for library_id, library in self.libraries.items():
+                logger.debug(f"Processing library {library_id} with {len(library.documents)} documents")
+                if not library.documents:
+                    logger.debug(f"No documents in library {library_id}")
+                    continue
+                for document in library.documents:
+                    logger.debug(f"Processing document {document.id} with {len(document.chunks)} chunks")
+                    if not document.chunks:
+                        logger.debug(f"No chunks in document {document.id}")
+                        continue
+                    for chunk in document.chunks:
+                        # Validate chunk data
+                        if not hasattr(chunk, 'id') or not hasattr(chunk, 'embedding') or not hasattr(chunk, 'created_at'):
+                            logger.error(f"Invalid chunk data: {chunk}")
+                            continue
+                        # Filter by date
+                        try:
+                            chunk_date = chunk.created_at if isinstance(chunk.created_at, datetime) else datetime.fromisoformat(chunk.created_at.replace("Z", "+00:00"))
+                        except ValueError as e:
+                            logger.error(f"Invalid created_at for chunk {chunk.id}: {chunk.created_at}, error: {e}")
+                            continue
+                        if chunk_date <= start_date:
+                            logger.debug(f"Chunk {chunk.id} skipped due to date {chunk_date} <= {start_date}")
+                            continue
+                        # Filter by metadata source
+                        source = chunk.metadata.get("source", "").lower()
+                        if not isinstance(source, str):
+                            logger.error(f"Invalid metadata source for chunk {chunk.id}: {source}")
+                            continue
+                        if name_contains not in source:
+                            logger.debug(f"Chunk {chunk.id} skipped due to source '{source}' not containing '{name_contains}'")
+                            continue
+                        # Perform similarity search
+                        # Validate chunk embedding
+                        if not chunk.embedding:
+                            logger.warning(f"Empty embedding for chunk {chunk.id}")
+                            continue
+                        try:
+                            logger.debug(f"Processing chunk {chunk.id} with embedding: {chunk.embedding}")
+                            chunk_embedding = np.array([float(x) for x in chunk.embedding], dtype=np.float64)
+                        except (ValueError, TypeError) as e:
+                            logger.error(f"Invalid embedding for chunk {chunk.id}: {chunk.embedding}, error: {e}")
+                            continue
+                        if chunk_embedding.shape != query_embedding.shape:
+                            logger.warning(f"Shape mismatch for chunk {chunk.id}: chunk {chunk_embedding.shape}, query {query_embedding.shape}")
+                            continue
+                        # Compute cosine similarity
+                        try:
+                            similarity = np.dot(chunk_embedding, query_embedding) / (
+                                np.linalg.norm(chunk_embedding) * np.linalg.norm(query_embedding)
+                            )
+                            if not np.isfinite(similarity):
+                                logger.warning(f"Non-finite similarity for chunk {chunk.id}")
+                                continue
+                        except Exception as e:
+                            logger.error(f"Similarity computation failed for chunk {chunk.id}: {e}")
+                            continue
+                        if similarity > 0.5:  # Threshold for relevance
+                            results.append({
+                                "library_id": library_id,
+                                "document_id": document.id,
+                                "chunk_id": chunk.id,
+                                "text": chunk.text,
+                                "metadata": chunk.metadata,
+                                "created_at": chunk.created_at.isoformat() + "Z" if isinstance(chunk.created_at, datetime) else chunk.created_at,
+                                "similarity": float(similarity)
+                            })
+                            logger.debug(f"Added result for chunk {chunk.id} with similarity {similarity}")
+            logger.debug(f"Search returned {len(results)} results")
+            return results
+
