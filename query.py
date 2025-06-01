@@ -24,6 +24,21 @@ Produces a list of dictionaries with chunk_id, text, metadata, and similarity sc
 Sorts and Outputs:
 
 Sorts results by similarity (descending) and limits to the top 5.  Prints JSON output and saves to query_results.json.
+
+
+Example:
+python3 query.py
+Enter query text: Sample
+[
+  {
+    "chunk_id": "b4032000-be36-4935-b620-7f73c47c1e07",
+    "text": "Sample text",
+    "metadata": {
+      "source": "example"
+    },
+    "similarity": 0.5838617469023333
+  }
+]
 """
 
 import numpy as np
