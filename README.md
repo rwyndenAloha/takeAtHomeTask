@@ -23,6 +23,9 @@ Quick test of server side search:
 Extra:
 
 7. Metadata filtering is included ... see testMetadataFiltering.sh
+8. Support for kubernetes is now included as well
+   (actually, it runs in both docker and kubernetes
+9. I have run out of disk space on my laptop...  so can't do #9!
 
 ExtraExtra:
 
@@ -31,8 +34,6 @@ The cosine similarity in queryFromClient.py adds client-side semantic search to 
 
 Quick test of this off-line search: type: "python3 queryFromClient.py"
   (and use "Sample")
-
-NOTE: See movie for walkthrough
 
 NOTE: I also have a programming handle 'jojapoppa' with another repo.  Ask and I'll give you that path too...
 
