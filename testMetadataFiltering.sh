@@ -3,7 +3,7 @@
 # Test the /chunks/search/ endpoint
 ATTEMPTS=3
 START_DATE="2025-06-01T00:00:00Z"
-NAME_CONTAINS="example"
+NAME_CONTAINS="Sample"
 QUERY_EMBEDDING="[0.1,0.2,0.3]"
 
 for ((i=1; i<=ATTEMPTS; i++)); do
