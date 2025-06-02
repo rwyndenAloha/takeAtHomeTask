@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel
 import numpy as np
 from services import VectorDBService
-from models import Library, LibraryCreate, Document, DocumentCreate, Chunk, ChunkCreate, ChunkUpdate
+from models import Library, LibraryCreate, Document, DocumentCreate, Chunk, ChunkCreate, ChunkUpdate, ChunkSearchResult
 from kubernetes import config
 import logging
 import os
@@ -258,35 +258,29 @@ class ChunkSearchRequest(BaseModel):
             logger.error(f"Invalid query_embedding: {self.query_embedding}, error: {e}")
             raise ValueError(f"Invalid query embedding: {self.query_embedding}")
 
-class ChunkSearchResult(BaseModel):
-    library_id: str
-    document_id: str
-    chunk_id: str
-    text: str
-    metadata: dict
-    created_at: str
-    similarity: float
-
 @app.post("/chunks/search/", response_model=List[ChunkSearchResult])
 async def search_chunks(request: Request, body: ChunkSearchRequest, db: VectorDBService = Depends(get_db)):
     raw_body = await request.body()
     logger.debug(f"Raw chunk search request body: {raw_body.decode()}")
     try:
+        if body.query_embedding is None or not body.query_embedding:
+            logger.error("Query embedding is None or empty")
+            raise HTTPException(status_code=400, detail="Query embedding cannot be None or empty")
         try:
             start_date = datetime.fromisoformat(body.start_date.replace("Z", "+00:00"))
         except ValueError:
             logger.error(f"Invalid date format: {body.start_date}")
             raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601")
         try:
-            query_embedding = np.array(body.query_embedding, dtype=np.float64)
+            query_embedding = np.array(body.query_embedding, dtype=np.float32)
             logger.debug(f"Converted query_embedding to numpy array: {query_embedding}")
         except Exception as e:
             logger.error(f"Failed to convert query_embedding: {body.query_embedding}, error: {e}")
-            raise HTTPException(status_code=400, detail=f"Invalid query embedding")
+            raise HTTPException(status_code=400, detail=f"Invalid query embedding: {str(e)}")
         results = db.search_chunks_after_date(
             query_embedding=query_embedding,
             start_date=start_date,
-            name_contains=body.name_contains.lower()
+            name_contains=body.name_contains.lower() if body.name_contains else ""
         )
         logger.debug(f"Returning {len(results)} search results")
         return results

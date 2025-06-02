@@ -50,3 +50,13 @@ class Library(BaseModel):
 class LibraryCreate(BaseModel):
     documents: List[DocumentCreate] = []
     metadata: Dict[str, str] = {}
+
+class ChunkSearchResult(BaseModel):
+    library_id: str
+    document_id: str
+    chunk_id: str
+    text: str
+    metadata: Dict[str, str]
+    created_at: str
+    similarity: float
+

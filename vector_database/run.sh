@@ -1,5 +1,5 @@
 #!/bin/bash
-docker build -t vector-db-api .
+docker build --no-cache -t vector-db-api .
 mkdir -p ./data # local data directory to persist storage of json data
 docker run -v $(pwd)/data:/data -p 8000:8000 vector-db-api
 
