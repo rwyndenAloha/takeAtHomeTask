@@ -33,6 +33,7 @@ Quick test of this off-line search: type: "python3 queryFromClient.py"
   (and use "Sample")
 
 NOTE: See movie for walkthrough
+
 NOTE: I also have a programming handle 'jojapoppa' with another repo.  Ask and I'll give you that path too...
 
 TABLE OF CONTENTS
