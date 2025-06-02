@@ -1,0 +1,12 @@
+apiversion: v1
+kind: Service
+metadata:
+  name: vector-db
+  namespace: default
+spec:
+  clusterIP: None
+  selector:
+    app: vector-db
+  ports:
+  - port: 8000
+    targetPort: 8000

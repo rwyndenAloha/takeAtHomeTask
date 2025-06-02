@@ -1,0 +1,11 @@
+apiversion: v1
+kind: Service
+metadata:
+  name: vector-db-read
+  namespace: default
+spec:
+  selector:
+    app: vector-db
+  ports:
+  - port: 8000
+    targetPort: 8000

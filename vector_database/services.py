@@ -9,7 +9,16 @@ VectorDBService uses RLock for all methods, protecting self.libraries (dictionar
 Reads: get_library, search (accessing self.libraries, calling index.query).
 Writes: create_library, add_document, update_library (modifying self.libraries, self.indexes).
 
-Asyncio Safety: RLock is thread-safe, and since FastAPI uses asyncio, the lock ensures coroutines don’t race (e.g., concurrent POST /documents/ and POST /search/).
+Asyncio Safety: RLock is thread-safe, and since FastAPI uses asyncio, the lock ensures coroutines don’t race (e.g., concurrent POST /documents/ and POST /search/)
+
+VectorDBService added with persistence and leader-follower architecture.
+
+Persistence: Saves self.libraries to vector_db_state.json in a PersistentVolume.
+Leader Election: Uses Kubernetes Lease for leader selection.
+
+Replication: Leader sends write events to followers via HTTP /replicate/.
+Failover: Followers monitor lease and promote to leader if needed.
+Thread Safety: self.lock (RLock) ensures safe access to self.libraries and self.indexes..
 """
 
 from typing import List, Optional, Dict
@@ -18,11 +27,19 @@ import numpy as np
 from models import Library, Document, Chunk
 from heapq import heappush, heappop
 from datetime import datetime
+import json
+import os
 import logging
+import requests
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+runningInKubes = False
 
 class FlatIndex:
     def __init__(self):
@@ -43,7 +60,7 @@ class BallTreeIndex:
     def __init__(self, embeddings: List[List[float]] = None):
         self.root = None
         self.embedding_ids: List[int] = []
-        self.chunk_ids: List[str] = []  # Track chunk IDs
+        self.chunk_ids: List[str] = []
         if embeddings and len(embeddings) > 0:
             embeddings_array = np.array(embeddings)
             if embeddings_array.ndim == 1:
@@ -112,29 +129,240 @@ class BallTreeIndex:
         return [self.chunk_ids[idx] for _, idx in sorted(heap, reverse=True)][:k]
 
 class VectorDBService:
-    def __init__(self):
+    def __init__(self, pod_name: str, namespace: str = "default"):
         self.libraries: Dict[str, Library] = {}
         self.indexes: Dict[str, FlatIndex | BallTreeIndex] = {}
         self.lock = threading.RLock()
-        # Clear libraries to remove potentially corrupted data
-        logger.info("Initializing VectorDBService with empty libraries")
-        self.libraries.clear()
-        self.indexes.clear()
+        self.pod_name = pod_name
+        self.namespace = namespace
+        self.is_leader = False
+        self.leader_lease_name = "vector-db-leader"
+        self.state_file = f"/data/{pod_name}/vector_db_state.json"
+        self.event_log = []  # In-memory event log for replication
+        self.followers = []  # List of follower pod URLs
+
+        # Create data directory
+        os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+
+        # Load state from disk
+        self.load_state()
+
+        # Start leader election in a separate thread if in Kubernetes
+        try:
+            config.load_incluster_config()
+            global runningInKubes
+            runningInKubes = True
+            threading.Thread(target=self.run_leader_election, daemon=True).start()
+        except:
+            # Running in Docker or local, skip leader election
+            logger.info("Not running in Kubernetes, skipping leader election")
+            self.is_leader = True  # Default to leader for non-Kubernetes
+
+    def run_leader_election(self):
+        try:
+            config.load_incluster_config()
+        except:
+            config.load_kube_config()
+        coordination_api = client.CoordinationV1Api()
+        lease = client.V1Lease(
+            metadata=client.V1ObjectMeta(name=self.leader_lease_name, namespace=self.namespace),
+            spec=client.V1LeaseSpec(
+                holder_identity=self.pod_name,
+                lease_duration_seconds=15,
+                renew_time=datetime.utcnow()
+            )
+        )
+
+        while True:
+            try:
+                # Try to acquire or renew lease
+                try:
+                    current_lease = coordination_api.read_namespaced_lease(self.leader_lease_name, self.namespace)
+                    if current_lease.spec.holder_identity == self.pod_name:
+                        # Renew lease
+                        current_lease.spec.renew_time = datetime.utcnow()
+                        coordination_api.replace_namespaced_lease(self.leader_lease_name, self.namespace, current_lease)
+                        self.is_leader = True
+                        self.update_followers()
+                    elif (datetime.utcnow() - current_lease.spec.renew_time.replace(tzinfo=None)).total_seconds() > 15:
+                        # Steal lease if expired
+                        current_lease.spec.holder_identity = self.pod_name
+                        current_lease.spec.renew_time = datetime.utcnow()
+                        coordination_api.replace_namespaced_lease(self.leader_lease_name, self.namespace, current_lease)
+                        self.is_leader = True
+                        self.update_followers()
+                    else:
+                        self.is_leader = False
+                except ApiException as e:
+                    if e.status == 404:
+                        # Create lease if it doesn't exist
+                        coordination_api.create_namespaced_lease(self.namespace, lease)
+                        self.is_leader = True
+                        self.update_followers()
+                    else:
+                        logger.error(f"Lease error: {e}")
+                time.sleep(5)
+            except Exception as e:
+                logger.error(f"Leader election error: {e}")
+                time.sleep(5)
+
+    def update_followers(self):
+        if not self.is_leader and runningInKubes:
+            self.followers = []
+            return
+        # Discover followers via Kubernetes service DNS
+        followers = []
+        num_replicas = 3  # Adjust based on StatefulSet replicas
+        for i in range(num_replicas):
+            pod_hostname = f"vector-db-{i}"
+            if pod_hostname != self.pod_name:
+                followers.append(f"http://{pod_hostname}.vector-db.default.svc.cluster.local:8000/api/v1/replicate/")
+        self.followers = followers
+        logger.debug(f"Updated followers: {self.followers}")
+
+    def save_state(self):
+        with self.lock:
+            try:
+                # Serialize libraries directly using Pydantic's dict() method
+                libraries_json = {k: v.dict(exclude_unset=True) for k, v in self.libraries.items()}
+                with open(self.state_file, "w") as f:
+                    json.dump(libraries_json, f, indent=2)
+                logger.debug(f"Saved state to {self.state_file}")
+            except Exception as e:
+                logger.error(f"Failed to save state: {e}")
+                raise
+
+    def load_state(self):
+        with self.lock:
+            try:
+                if os.path.exists(self.state_file):
+                    with open(self.state_file, "r") as f:
+                        data = json.load(f)
+                    self.libraries = {k: Library.parse_obj(v) for k, v in data.items()}
+                    # Rebuild indexes
+                    for library_id, library in self.libraries.items():
+                        embeddings = []
+                        chunk_ids = []
+                        for doc in library.documents:
+                            for chunk in doc.chunks:
+                                if chunk.embedding:
+                                    embedding = [float(x) for x in chunk.embedding]
+                                    embeddings.append(embedding)
+                                    chunk_ids.append(chunk.id)
+                        self.indexes[library_id] = BallTreeIndex(embeddings) if embeddings else FlatIndex()
+                        if embeddings:
+                            self.indexes[library_id].chunk_ids = chunk_ids
+                    logger.debug(f"Loaded state from {self.state_file}")
+            except Exception as e:
+                logger.error(f"Failed to load state: {e}")
+
+    def replicate_event(self, event: Dict):
+        if not self.is_leader:
+            return
+        with self.lock:
+            self.event_log.append(event)
+            for follower in self.followers:
+                try:
+                    response = requests.post(follower, json=event, timeout=5)
+                    response.raise_for_status()
+                except requests.RequestException as e:
+                    logger.error(f"Failed to replicate to {follower}: {e}")
+
+    def apply_event(self, event: Dict):
+        with self.lock:
+            action = event.get("action")
+            data = event.get("data")
+            if action == "create_library":
+                library = Library.parse_obj(data)
+                self.libraries[library.id] = library
+                embeddings = []
+                chunk_ids = []
+                for doc in library.documents:
+                    for chunk in doc.chunks:
+                        if chunk.embedding:
+                            embedding = [float(x) for x in chunk.embedding]
+                            embeddings.append(embedding)
+                            chunk_ids.append(chunk.id)
+                self.indexes[library.id] = BallTreeIndex(embeddings) if embeddings else FlatIndex()
+                if embeddings:
+                    self.indexes[library.id].chunk_ids = chunk_ids
+            elif action == "add_document":
+                library_id = data["library_id"]
+                document = Document.parse_obj(data["document"])
+                if library_id in self.libraries:
+                    self.libraries[library_id].documents.append(document)
+                    embeddings = []
+                    chunk_ids = []
+                    for chunk in document.chunks:
+                        if chunk.embedding:
+                            embedding = [float(x) for x in chunk.embedding]
+                            embeddings.append(embedding)
+                            chunk_ids.append(chunk.id)
+                    if embeddings:
+                        self.indexes[library_id].add_embeddings(embeddings, chunk_ids)
+            elif action == "update_library":
+                library_id = data["library_id"]
+                metadata = data["metadata"]
+                if library_id in self.libraries:
+                    self.libraries[library_id].metadata.update(metadata)
+            elif action == "delete_library":
+                library_id = data["library_id"]
+                if library_id in self.libraries:
+                    del self.libraries[library_id]
+                    del self.indexes[library_id]
+            elif action == "update_document":
+                library_id = data["library_id"]
+                document_id = data["document_id"]
+                metadata = data["metadata"]
+                if library_id in self.libraries:
+                    for doc in self.libraries[library_id].documents:
+                        if doc.id == document_id:
+                            doc.metadata.update(metadata)
+                            break
+            elif action == "delete_document":
+                library_id = data["library_id"]
+                document_id = data["document_id"]
+                if library_id in self.libraries:
+                    library = self.libraries[library_id]
+                    for i, doc in enumerate(library.documents):
+                        if doc.id == document_id:
+                            library.documents.pop(i)
+                            embeddings = []
+                            chunk_ids = []
+                            for doc in library.documents:
+                                for chunk in doc.chunks:
+                                    if chunk.embedding:
+                                        embedding = [float(x) for x in chunk.embedding]
+                                        embeddings.append(embedding)
+                                        chunk_ids.append(chunk.id)
+                            self.indexes[library_id] = BallTreeIndex(embeddings) if embeddings else FlatIndex()
+                            if embeddings:
+                                self.indexes[library_id].chunk_ids = chunk_ids
+                            break
+            elif action == "add_chunk":
+                library_id = data["library_id"]
+                document_id = data["document_id"]
+                chunk = Chunk.parse_obj(data["chunk"])
+                if library_id in self.libraries:
+                    for doc in self.libraries[library_id].documents:
+                        if doc.id == document_id:
+                            doc.chunks.append(chunk)
+                            if chunk.embedding:
+                                embedding = [float(x) for x in chunk.embedding]
+                                self.indexes[library_id].add_embeddings([embedding], [chunk.id])
+                            break
+            self.save_state()
 
     def create_library(self, library: Library) -> Library:
         with self.lock:
+            if not self.is_leader and runningInKubes:
+                raise Exception("Write operation not allowed on follower")
             embeddings = []
             chunk_ids = []
             for doc in library.documents:
                 for chunk in doc.chunks:
                     if chunk.embedding:
-                        # Convert embedding elements to float
-                        try:
-                            embedding = [float(x) for x in chunk.embedding]
-                            logger.debug(f"Validated embedding for chunk {chunk.id}: {embedding}")
-                        except (ValueError, TypeError) as e:
-                            logger.error(f"Invalid embedding in create_library for chunk {chunk.id}: {chunk.embedding}, error: {e}")
-                            raise ValueError(f"Invalid embedding: {chunk.embedding}")
+                        embedding = [float(x) for x in chunk.embedding]
                         embeddings.append(embedding)
                         chunk_ids.append(chunk.id)
             if embeddings and not all(len(e) == len(embeddings[0]) for e in embeddings):
@@ -144,6 +372,8 @@ class VectorDBService:
             if embeddings:
                 index.chunk_ids = chunk_ids
             self.indexes[library.id] = index
+            self.save_state()
+            self.replicate_event({"action": "create_library", "data": library.dict()})
             logger.info(f"Created library {library.id} with {len(embeddings)} embeddings")
             return library
 
@@ -157,21 +387,31 @@ class VectorDBService:
 
     def update_library(self, library_id: str, metadata: Dict[str, str]) -> Optional[Library]:
         with self.lock:
+            if not self.is_leader and runningInKubes:
+                raise Exception("Write operation not allowed on follower")
             if library_id in self.libraries:
                 self.libraries[library_id].metadata.update(metadata)
+                self.save_state()
+                self.replicate_event({"action": "update_library", "data": {"library_id": library_id, "metadata": metadata}})
                 return self.libraries[library_id]
             return None
 
     def delete_library(self, library_id: str) -> bool:
         with self.lock:
+            if not self.is_leader and runningInKubes:
+                raise Exception("Write operation not allowed on follower")
             if library_id in self.libraries:
                 del self.libraries[library_id]
                 del self.indexes[library_id]
+                self.save_state()
+                self.replicate_event({"action": "delete_library", "data": {"library_id": library_id}})
                 return True
             return False
 
     def add_document(self, library_id: str, document: Document) -> Optional[Document]:
         with self.lock:
+            if not self.is_leader and runningInKubes:
+                raise Exception("Write operation not allowed on follower")
             if library_id not in self.libraries:
                 return None
             self.libraries[library_id].documents.append(document)
@@ -179,17 +419,13 @@ class VectorDBService:
             chunk_ids = []
             for chunk in document.chunks:
                 if chunk.embedding:
-                    # Convert embedding elements to float
-                    try:
-                        embedding = [float(x) for x in chunk.embedding]
-                        logger.debug(f"Validated embedding for chunk {chunk.id}: {embedding}")
-                    except (ValueError, TypeError) as e:
-                        logger.error(f"Invalid embedding in add_document for chunk {chunk.id}: {chunk.embedding}, error: {e}")
-                        raise ValueError(f"Invalid embedding: {chunk.embedding}")
+                    embedding = [float(x) for x in chunk.embedding]
                     embeddings.append(embedding)
                     chunk_ids.append(chunk.id)
             if embeddings:
                 self.indexes[library_id].add_embeddings(embeddings, chunk_ids)
+            self.save_state()
+            self.replicate_event({"action": "add_document", "data": {"library_id": library_id, "document": document.dict()}})
             return document
 
     def get_document(self, library_id: str, document_id: str) -> Optional[Document]:
@@ -202,55 +438,55 @@ class VectorDBService:
 
     def update_document(self, library_id: str, document_id: str, metadata: Dict[str, str]) -> Optional[Document]:
         with self.lock:
+            if not self.is_leader and runningInKubes:
+                raise Exception("Write operation not allowed on follower")
             if library_id in self.libraries:
                 for doc in self.libraries[library_id].documents:
                     if doc.id == document_id:
                         doc.metadata.update(metadata)
+                        self.save_state()
+                        self.replicate_event({"action": "update_document", "data": {"library_id": library_id, "document_id": document_id, "metadata": metadata}})
                         return doc
             return None
 
     def delete_document(self, library_id: str, document_id: str) -> bool:
         with self.lock:
+            if not self.is_leader and runningInKubes:
+                raise Exception("Write operation not allowed on follower")
             if library_id in self.libraries:
                 library = self.libraries[library_id]
                 for i, doc in enumerate(library.documents):
                     if doc.id == document_id:
                         library.documents.pop(i)
-                        # Rebuild index to exclude document's chunks
                         embeddings = []
                         chunk_ids = []
                         for doc in library.documents:
                             for chunk in doc.chunks:
                                 if chunk.embedding:
-                                    try:
-                                        embedding = [float(x) for x in chunk.embedding]
-                                        logger.debug(f"Validated embedding for chunk {chunk.id}: {embedding}")
-                                    except (ValueError, TypeError) as e:
-                                        logger.error(f"Invalid embedding in delete_document for chunk {chunk.id}: {chunk.embedding}, error: {e}")
-                                        continue
+                                    embedding = [float(x) for x in chunk.embedding]
                                     embeddings.append(embedding)
                                     chunk_ids.append(chunk.id)
                         self.indexes[library_id] = BallTreeIndex(embeddings) if embeddings else FlatIndex()
                         if embeddings:
                             self.indexes[library_id].chunk_ids = chunk_ids
+                        self.save_state()
+                        self.replicate_event({"action": "delete_document", "data": {"library_id": library_id, "document_id": document_id}})
                         return True
             return False
 
     def add_chunk(self, library_id: str, document_id: str, chunk: Chunk) -> Optional[Chunk]:
         with self.lock:
+            if not self.is_leader and runningInKubes:
+                raise Exception("Write operation not allowed on follower")
             if library_id in self.libraries:
                 for doc in self.libraries[library_id].documents:
                     if doc.id == document_id:
                         doc.chunks.append(chunk)
                         if chunk.embedding:
-                            # Convert embedding elements to float
-                            try:
-                                embedding = [float(x) for x in chunk.embedding]
-                                logger.debug(f"Validated embedding for chunk {chunk.id}: {embedding}")
-                            except (ValueError, TypeError) as e:
-                                logger.error(f"Invalid embedding in add_chunk for chunk {chunk.id}: {chunk.embedding}, error: {e}")
-                                raise ValueError(f"Invalid embedding: {chunk.embedding}")
+                            embedding = [float(x) for x in chunk.embedding]
                             self.indexes[library_id].add_embeddings([embedding], [chunk.id])
+                        self.save_state()
+                        self.replicate_event({"action": "add_chunk", "data": {"library_id": library_id, "document_id": document_id, "chunk": chunk.dict()}})
                         return chunk
             return None
 
@@ -266,64 +502,54 @@ class VectorDBService:
 
     def update_chunk(self, library_id: str, document_id: str, chunk_id: str, text: str, embedding: List[float]) -> Optional[Chunk]:
         with self.lock:
+            if not self.is_leader and runningInKubes:
+                raise Exception("Write operation not allowed on follower")
             if library_id in self.libraries:
                 for doc in self.libraries[library_id].documents:
                     if doc.id == document_id:
                         for chunk in doc.chunks:
                             if chunk.id == chunk_id:
                                 chunk.text = text
-                                # Convert embedding elements to float
-                                try:
-                                    chunk.embedding = [float(x) for x in embedding]
-                                    logger.debug(f"Validated embedding for chunk {chunk.id}: {chunk.embedding}")
-                                except (ValueError, TypeError) as e:
-                                    logger.error(f"Invalid embedding in update_chunk for chunk {chunk.id}: {embedding}, error: {e}")
-                                    raise ValueError(f"Invalid embedding: {embedding}")
-                                # Rebuild index
+                                chunk.embedding = [float(x) for x in embedding]
                                 embeddings = []
                                 chunk_ids = []
                                 for d in self.libraries[library_id].documents:
                                     for c in d.chunks:
                                         if c.embedding:
-                                            try:
-                                                embedding = [float(x) for x in c.embedding]
-                                                logger.debug(f"Validated embedding for chunk {c.id}: {embedding}")
-                                            except (ValueError, TypeError) as e:
-                                                logger.error(f"Invalid embedding in update_chunk index rebuild for chunk {c.id}: {c.embedding}, error: {e}")
-                                                continue
+                                            embedding = [float(x) for x in c.embedding]
                                             embeddings.append(embedding)
                                             chunk_ids.append(c.id)
                                 self.indexes[library_id] = BallTreeIndex(embeddings) if embeddings else FlatIndex()
                                 if embeddings:
                                     self.indexes[library_id].chunk_ids = chunk_ids
+                                self.save_state()
+                                self.replicate_event({"action": "update_chunk", "data": {"library_id": library_id, "document_id": document_id, "chunk_id": chunk_id, "text": text, "embedding": embedding}})
                                 return chunk
             return None
 
     def delete_chunk(self, library_id: str, document_id: str, chunk_id: str) -> bool:
         with self.lock:
+            if not self.is_leader and runningInKubes:
+                raise Exception("Write operation not allowed on follower")
             if library_id in self.libraries:
                 for doc in self.libraries[library_id].documents:
                     if doc.id == document_id:
                         for i, chunk in enumerate(doc.chunks):
                             if chunk.id == chunk_id:
                                 doc.chunks.pop(i)
-                                # Rebuild index
                                 embeddings = []
                                 chunk_ids = []
                                 for d in self.libraries[library_id].documents:
                                     for c in d.chunks:
                                         if c.embedding:
-                                            try:
-                                                embedding = [float(x) for x in c.embedding]
-                                                logger.debug(f"Validated embedding for chunk {c.id}: {embedding}")
-                                            except (ValueError, TypeError) as e:
-                                                logger.error(f"Invalid embedding in delete_chunk for chunk {c.id}: {c.embedding}, error: {e}")
-                                                continue
+                                            embedding = [float(x) for x in c.embedding]
                                             embeddings.append(embedding)
                                             chunk_ids.append(c.id)
                                 self.indexes[library_id] = BallTreeIndex(embeddings) if embeddings else FlatIndex()
                                 if embeddings:
                                     self.indexes[library_id].chunk_ids = chunk_ids
+                                self.save_state()
+                                self.replicate_event({"action": "delete_chunk", "data": {"library_id": library_id, "document_id": document_id, "chunk_id": chunk_id}})
                                 return True
             return False
 
@@ -393,7 +619,6 @@ class VectorDBService:
                             logger.debug(f"Chunk {chunk.id} skipped due to source '{source}' not containing '{name_contains}'")
                             continue
                         # Perform similarity search
-                        # Validate chunk embedding
                         if not chunk.embedding:
                             logger.warning(f"Empty embedding for chunk {chunk.id}")
                             continue
@@ -406,7 +631,6 @@ class VectorDBService:
                         if chunk_embedding.shape != query_embedding.shape:
                             logger.warning(f"Shape mismatch for chunk {chunk.id}: chunk {chunk_embedding.shape}, query {query_embedding.shape}")
                             continue
-                        # Compute cosine similarity
                         try:
                             similarity = np.dot(chunk_embedding, query_embedding) / (
                                 np.linalg.norm(chunk_embedding) * np.linalg.norm(query_embedding)
@@ -417,7 +641,7 @@ class VectorDBService:
                         except Exception as e:
                             logger.error(f"Similarity computation failed for chunk {chunk.id}: {e}")
                             continue
-                        if similarity > 0.5:  # Threshold for relevance
+                        if similarity > 0.5:
                             results.append({
                                 "library_id": library_id,
                                 "document_id": document.id,
