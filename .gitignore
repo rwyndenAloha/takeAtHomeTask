@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+embedded_output.json
+embeddings.npy
+query_results.json
+vector_database/data/vector-db-0/vector_db_state.json
+
 # C extensions
 *.so
 
